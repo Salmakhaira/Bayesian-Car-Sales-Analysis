@@ -1,0 +1,126 @@
+---
+title: "Bayes5"
+author: "Salma"
+date: "2024-09-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rjags)
+library(coda)
+library(loo)
+```
+
+```{r}
+data <- read.csv("Car_sales.csv")
+```
+
+```{r}
+sales <- data$Sales_in_thousands
+price <- data$Price_in_thousands
+engine_size <- data$Engine_size
+horsepower <- data$Horsepower
+fuel_efficiency <- data$Fuel_efficiency
+```
+
+```{r}
+clean_data <- na.omit(data.frame(sales, price, engine_size, horsepower, fuel_efficiency))
+```
+
+```{r}
+sales <- clean_data$sales
+price <- clean_data$price
+engine_size <- clean_data$engine_size
+horsepower <- clean_data$horsepower
+fuel_efficiency <- clean_data$fuel_efficiency
+
+n <- length(sales)
+```
+
+```{r}
+data1 <- list(
+  sales = sales, 
+  price = price, 
+  engine_size = engine_size, 
+  horsepower = horsepower, 
+  fuel_efficiency = fuel_efficiency, 
+  n = n
+)
+```
+
+```{r}
+model_string <- textConnection("
+  model{
+    # Likelihood
+    for(i in 1:n){
+      sales[i] ~ dnorm(mu[i], tau)
+      mu[i] <- beta1 + beta2 * price[i] + beta3 * engine_size[i] + beta4 * horsepower[i] + beta5 * fuel_efficiency[i]
+    }
+
+    # Priors
+    beta1 ~ dnorm(0, 0.001)
+    beta2 ~ dnorm(0, 0.001)
+    beta3 ~ dnorm(0, 0.001)
+    beta4 ~ dnorm(0, 0.001)
+    beta5 ~ dnorm(0, 0.001)
+    tau ~ dgamma(0.1, 0.1)
+    sigma <- 1 / sqrt(tau)
+  }
+")
+```
+
+```{r}
+inits <- list(beta1=rnorm(1), beta2=rnorm(1), beta3=rnorm(1), beta4=rnorm(1), beta5=rnorm(1), tau=1)
+model1 <- jags.model(model_string, data=data1, inits=inits, n.chains=3, quiet=TRUE)
+```
+
+```{r}
+update(model1, 10000)
+```
+
+```{r}
+samples1 <- coda.samples(model1, variable.names=c("beta1", "beta2", "beta3", "beta4", "beta5", "sigma"), n.iter=20000)
+```
+
+```{r}
+plot(samples1)
+```
+
+```{r}
+gelman.diag(samples1)
+```
+
+```{r}
+# Generate posterior predictive samples
+y_rep <- replicate(2000, {
+  beta <- as.vector(do.call(rbind, samples1)[, 1:5])
+  sigma <- as.vector(do.call(rbind, samples1)[, 6])
+  mu_rep <- beta[1] + beta[2] * price + beta[3] * engine_size + beta[4] * horsepower + beta[5] * fuel_efficiency
+  rnorm(n, mu_rep, sigma)
+})
+
+# Plot PPD against actual sales
+plot(density(sales), col='blue', lwd=2, main="Posterior Predictive Check")
+lines(density(y_rep), col='red', lwd=2)
+legend("topright", legend=c("Observed", "Predicted"), col=c("blue", "red"), lwd=2)
+```
+
+```{r}
+# WAIC for Model 1
+waic_result <- waic(as.matrix(samples1))
+waic_result
+
+# DIC for Model 1
+dic_result <- dic.samples(model1, n.iter=2000)
+dic_result
+```
+
+```{r}
+# Summary of MCMC results
+summary(samples1)
+```
+
